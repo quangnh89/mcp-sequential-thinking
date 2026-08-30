@@ -3,3 +3,10 @@ __pycache__
 *.pyc
 .coverage
 CLAUDE.md
+.env
+current_session.jsonl
+current_session.json
+current_session.json.migrated-to-v2
+current_session.lock
+*.bak.*
+exports/

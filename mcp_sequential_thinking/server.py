@@ -21,7 +21,13 @@ except ImportError:
 logger = configure_logging("sequential-thinking.server")
 
 
-mcp = FastMCP("sequential-thinking")
+# TRANSPORT_TYPE: stdio (default) | sse | streamable-http. MCP_HOST/MCP_PORT are
+# only used for the two network transports (see .env.example).
+mcp = FastMCP(
+    "sequential-thinking",
+    host=os.environ.get("MCP_HOST", "127.0.0.1"),
+    port=int(os.environ.get("MCP_PORT", "8804")),
+)
 
 storage_dir = os.environ.get("MCP_STORAGE_DIR", None)
 storage = ThoughtStorage(storage_dir)
@@ -206,7 +212,10 @@ def main() -> None:
     sys.stdout.flush()
 
     # Run the MCP server
-    mcp.run()
+    transport = os.environ.get("TRANSPORT_TYPE", "stdio").strip().lower()
+    if transport not in ("stdio", "sse", "streamable-http"):
+        transport = "stdio"
+    mcp.run(transport=transport)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,9 @@
+# sequential-thinking MCP server runtime dependencies.
+# Mirrors [project].dependencies in pyproject.toml so the server can be installed
+# with plain pip (setup.ps1 also does `pip install --upgrade <this folder>`, which
+# resolves these).
+#   >=1.28.0  : the streamable-http transport this fork exposes (TRANSPORT_TYPE in .env).
+#   <2.0.0    : mcp 2.0.0 removed mcp.server.fastmcp (upstream 0.6.1 fix).
+mcp>=1.28.0,<2.0.0
+pydantic>=2.0.0
+portalocker

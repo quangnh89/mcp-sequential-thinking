@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased] - fork (binary-analysis-2 / quangnh89)
+
+Everything below this heading is fork-only and has no upstream counterpart. Keep it
+separate so `master` can still fast-forward from arben-adm and this branch rebases on top.
+
+### Added
+- **Network transports.** `TRANSPORT_TYPE` (`stdio` | `sse` | `streamable-http`, default
+  `stdio`) selects how the server is exposed, and `MCP_HOST` / `MCP_PORT` (default
+  `127.0.0.1:8804`) bind the two network ones. Upstream only ever calls `mcp.run()`, which
+  is stdio-only; this fork runs as a long-lived HTTP MCP shared by several agent sessions.
+  An unrecognized `TRANSPORT_TYPE` falls back to `stdio` rather than failing to start.
+- **Windows launcher layer** for the bundled-install flow: `run_server.bat` (reads `.env`
+  via `load_env.bat`, validates `VENV_PATH`, launches `python -m mcp_sequential_thinking.server`),
+  `load_env.bat`, `.env.example`, and `requirements.txt` mirroring `[project].dependencies`.
+
+### Changed
+- `mcp` dependency floor raised to `>=1.28.0` (kept `<2.0.0`): the version this fork has
+  verified for the `streamable-http` transport.
+- `.gitignore` also excludes `.env` and the runtime session/export files, so a bundle built
+  from tracked files alone can never carry machine paths or recorded thoughts.
+
 ## [0.6.1] - 2026-08-23
 
 ### Fixed
