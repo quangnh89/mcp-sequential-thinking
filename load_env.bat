@@ -1,10 +1,10 @@
-if not exist %1 (
-    echo "File %1 not found"
+if not exist "%~1" (
+    echo [mcp-sequential-thinking] ERROR: env file "%~1" not found
     exit /b
 )
 
 :: Read each line, ignoring blank lines or comments (#).
-for /f "usebackq delims== tokens=1,*" %%a in ("%1") do (
+for /f "usebackq delims== tokens=1,*" %%a in ("%~1") do (
     set "key=%%a"
 	set "value=%%b"
     :: Remove any excess whitespace and load it into the system.

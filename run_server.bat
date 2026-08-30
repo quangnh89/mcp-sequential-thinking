@@ -17,17 +17,20 @@ set "PYTHONUNBUFFERED=1"
 set "PYTHONIOENCODING=utf-8"
 
 :: --- load config from .env -------------------------------------------------
-if not exist "load_env.bat" (
+if not exist "%SCRIPT_DIR%load_env.bat" (
     echo [mcp-sequential-thinking] ERROR: load_env.bat not found next to this script.
     set "RC=1"
     goto :end
 )
-if not exist ".env" (
+if not exist "%SCRIPT_DIR%.env" (
     echo [mcp-sequential-thinking] ERROR: .env not found - copy .env.example and edit it.
     set "RC=1"
     goto :end
 )
-call load_env.bat .env
+:: Called by full path: a parent shell may set NoDefaultCurrentDirectoryInExePath
+:: (Git Bash does), which stops cmd from finding load_env.bat in the current dir;
+:: .env is passed by full path for the same reason.
+call "%SCRIPT_DIR%load_env.bat" "%SCRIPT_DIR%.env"
 
 if not defined TRANSPORT_TYPE set "TRANSPORT_TYPE=stdio"
 if not defined MCP_HOST set "MCP_HOST=127.0.0.1"
