@@ -6,6 +6,17 @@ Everything below this heading is fork-only and has no upstream counterpart. Keep
 separate so `master` can still fast-forward from arben-adm and this branch rebases on top.
 
 ### Added
+- **Session namespaces.** The history is no longer one store per process: each thinking
+  session gets its own store under `<MCP_STORAGE_DIR>/spaces/<session>/`, and which one a
+  call lands in is resolved PER REQUEST - the tool's new `session` argument first, then the
+  `X-Thinking-Session` header, then `?session=` on the URL, then `MCP_DEFAULT_SESSION`.
+  One shared HTTP server can now serve several analysis targets at once without their
+  chains, summaries, `revisionOf` echoes and related-thought lookups mixing; `clear_history`
+  and `import_session` likewise stop at the session boundary. `SESSION_REQUIRED` (default
+  on) refuses a call that names no session rather than merging it into a shared store.
+  A 0.7.0 store in the storage root is migrated once into `spaces/default/`.
+- **`list_sessions` tool.** Lists the sessions on disk with thought counts and last-updated
+  times - the way to notice that a misspelled session name opened a new, empty store.
 - **Network transports.** `TRANSPORT_TYPE` (`stdio` | `sse` | `streamable-http`, default
   `stdio`) selects how the server is exposed, and `MCP_HOST` / `MCP_PORT` (default
   `127.0.0.1:8804`) bind the two network ones. Upstream only ever calls `mcp.run()`, which

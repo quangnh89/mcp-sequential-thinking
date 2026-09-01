@@ -1,5 +1,7 @@
+import re
+import shutil
 import threading
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pathlib import Path
 from datetime import datetime
 
@@ -7,6 +9,7 @@ from .models import ThoughtData, ThoughtStage
 from .logging_conf import configure_logging
 from .storage_utils import (
     append_thought_to_jsonl,
+    count_thoughts_in_jsonl,
     load_thoughts_from_file,
     load_thoughts_from_jsonl,
     prepare_thoughts_for_serialization,
@@ -15,6 +18,11 @@ from .storage_utils import (
 )
 
 logger = configure_logging("sequential-thinking.storage")
+
+# A session namespace is used as a directory name, so it is validated the same
+# way ``branch_id`` is: a conservative charset, no separators, no dot-segments.
+NAMESPACE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
+DEFAULT_NAMESPACE = "default"
 
 
 class ThoughtStorage:
@@ -251,3 +259,157 @@ class ThoughtStorage:
                 self.lock_file,
                 prepare_thoughts_for_serialization(thoughts),
             )
+
+
+def normalize_namespace(value: str) -> str:
+    """Normalize and validate a session namespace.
+
+    Args:
+        value: The caller-supplied namespace (any case, surrounding whitespace ok).
+
+    Returns:
+        str: The normalized namespace, safe to use as a single path component.
+
+    Raises:
+        ValueError: If the namespace is empty or outside NAMESPACE_PATTERN.
+    """
+    normalized = (value or "").strip().lower()
+    if not NAMESPACE_PATTERN.match(normalized):
+        raise ValueError(
+            f"Invalid session namespace {value!r}. Use 1-64 characters from "
+            "[a-z0-9_.-], starting with a letter or digit - e.g. 'storport'."
+        )
+    return normalized
+
+
+class StorageRegistry:
+    """One ``ThoughtStorage`` per session namespace.
+
+    The server process is shared by every agent that talks to it, so a single
+    store means one agent's thoughts land in another agent's summary,
+    back-references and related-thought echoes. The registry gives each
+    namespace its own directory under ``<root>/spaces/<namespace>``, which is a
+    plain ``ThoughtStorage`` - the session file, its lock and the ``exports/``
+    guard all come along unchanged.
+
+    Stores are created lazily on first use and cached, so listing or restarting
+    never has to load a namespace nobody asked for.
+    """
+
+    SPACES_DIRNAME = "spaces"
+
+    def __init__(self, root: Optional[str] = None):
+        """Initialize the registry.
+
+        Args:
+            root: Storage root (``MCP_STORAGE_DIR``). If None, uses the same
+                default directory a bare ``ThoughtStorage`` would.
+        """
+        if root is None:
+            self.root = Path.home() / ".mcp_sequential_thinking"
+        else:
+            self.root = Path(root)
+
+        self.spaces_dir = self.root / self.SPACES_DIRNAME
+        self.spaces_dir.mkdir(parents=True, exist_ok=True)
+
+        self._lock = threading.Lock()
+        self._stores: Dict[str, ThoughtStorage] = {}
+
+        # A store written by an older (single-store) release lives directly in
+        # the root; adopt it as the "default" namespace so no history is lost.
+        self._migrate_flat_store()
+
+    def get(self, namespace: str) -> ThoughtStorage:
+        """Return the store for ``namespace``, creating it on first use.
+
+        Args:
+            namespace: Session namespace (validated by ``normalize_namespace``).
+
+        Returns:
+            ThoughtStorage: The store owning that namespace's history.
+        """
+        key = normalize_namespace(namespace)
+        with self._lock:
+            store = self._stores.get(key)
+            if store is None:
+                store = ThoughtStorage(str(self.spaces_dir / key))
+                self._stores[key] = store
+                logger.info(f"Opened thinking session '{key}' at {store.storage_dir}")
+            return store
+
+    def list_namespaces(self) -> List[Dict[str, Any]]:
+        """List every namespace on disk, not just the ones loaded this run.
+
+        Returns:
+            List[Dict[str, Any]]: One entry per namespace with ``session``,
+            ``thoughts``, ``updatedAt`` (ISO 8601, None if never written) and
+            ``loaded`` (whether this process holds it in memory), sorted by name.
+        """
+        with self._lock:
+            loaded = dict(self._stores)
+
+        entries: List[Dict[str, Any]] = []
+        for path in sorted(self.spaces_dir.iterdir() if self.spaces_dir.exists() else []):
+            if not path.is_dir():
+                continue
+
+            name = path.name
+            session_file = path / "current_session.jsonl"
+            store = loaded.get(name)
+            if store is not None:
+                count = len(store.get_all_thoughts())
+            else:
+                count = count_thoughts_in_jsonl(session_file, path / "current_session.lock")
+
+            updated_at = (
+                datetime.fromtimestamp(session_file.stat().st_mtime).isoformat()
+                if session_file.exists()
+                else None
+            )
+            entries.append(
+                {
+                    "session": name,
+                    "thoughts": count,
+                    "updatedAt": updated_at,
+                    "loaded": store is not None,
+                }
+            )
+
+        return entries
+
+    def _migrate_flat_store(self) -> None:
+        """Move a pre-namespace store from the root into ``spaces/default/``.
+
+        Idempotent: it runs only when the root still holds a session file and
+        ``spaces/default`` has none. The original is left behind renamed, the
+        same way ``_migrate_v1_session`` keeps the v1 file.
+        """
+        flat_session = self.root / "current_session.jsonl"
+        flat_legacy = self.root / "current_session.json"
+        source = flat_session if flat_session.exists() else flat_legacy
+        if not source.exists():
+            return
+
+        target_dir = self.spaces_dir / DEFAULT_NAMESPACE
+        if (target_dir / source.name).exists():
+            return
+
+        target_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target_dir / source.name)
+
+        # The exports of that store belong to the same namespace.
+        flat_exports = self.root / "exports"
+        if flat_exports.is_dir() and not (target_dir / "exports").exists():
+            shutil.copytree(flat_exports, target_dir / "exports")
+
+        migrated = source.with_name(source.name + ".migrated-to-spaces")
+        source.rename(migrated)
+        # The old lock file guards a path that no longer exists.
+        flat_lock = self.root / "current_session.lock"
+        if flat_lock.exists():
+            flat_lock.unlink()
+
+        logger.info(
+            f"Migrated the pre-namespace store into {target_dir}; the original is kept at {migrated}"
+        )

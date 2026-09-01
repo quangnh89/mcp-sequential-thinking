@@ -21,6 +21,7 @@ A Model Context Protocol (MCP) server that facilitates structured, progressive t
 - **Related Thought Analysis**: Identifies connections between similar thoughts
 - **Progress Monitoring**: Tracks your position in the overall thinking sequence
 - **Summary Generation**: Creates concise overviews of the entire thought process
+- **Session Namespaces**: One store per analysis target, resolved per request, so several agents can share one server without their chains mixing
 - **Persistent Storage**: Append-only JSONL session log with thread-safety and automatic crash recovery
 - **Data Import/Export**: Share and reuse thinking sessions
 - **Extensible Architecture**: Easily customize and extend functionality
@@ -320,11 +321,11 @@ Add to your Gemini CLI settings at `~/.gemini/settings.json`:
 
 The server maintains a history of thoughts and processes them through a structured workflow. Each thought is validated using Pydantic models, categorized into thinking stages, and stored with relevant metadata in a thread-safe storage system. The server automatically handles data persistence, backup creation, and provides tools for analyzing relationships between thoughts.
 
-Sessions are persisted as an append-only JSONL log at `~/.mcp_sequential_thinking/current_session.jsonl` (override the directory with the `MCP_STORAGE_DIR` environment variable). Each `process_thought` call appends a single fsynced line, so the file doubles as an audit trail and a truncated final line from an interrupted write is recovered automatically. Sessions from v0.5.x (`current_session.json`) are migrated losslessly on first start; the original file is kept as `current_session.json.migrated-to-v2`.
+Sessions are persisted as an append-only JSONL log at `~/.mcp_sequential_thinking/spaces/<session>/current_session.jsonl` (override the root with the `MCP_STORAGE_DIR` environment variable; see [Sessions: one store per target](#sessions-one-store-per-target)). Each `process_thought` call appends a single fsynced line, so the file doubles as an audit trail and a truncated final line from an interrupted write is recovered automatically. Sessions from v0.5.x (`current_session.json`) are migrated losslessly on first start; the original file is kept as `current_session.json.migrated-to-v2`.
 
 ## Usage Guide
 
-The Sequential Thinking server exposes five main tools:
+The Sequential Thinking server exposes six main tools:
 
 ### 1. `process_thought`
 
@@ -424,7 +425,8 @@ Generates a summary of your entire thinking process.
 
 ### 3. `clear_history`
 
-Resets the thinking process by clearing all recorded thoughts.
+Resets one session by clearing its recorded thoughts. Scoped to a session, but every agent
+working on that session shares the history it wipes.
 
 ### 4. `export_session`
 
@@ -448,6 +450,36 @@ Imports a previously exported thinking session from a JSON file. Exports created
 **Parameters:**
 
 - `file_path` (string): Path to the JSON file to import. Like exports, resolved inside the `exports/` subdirectory of the storage directory.
+
+### 6. `list_sessions`
+
+Lists the thinking sessions this server holds, with a thought count and last-updated time for
+each. Use it to check that a chain landed where you meant it to: a misspelled session name
+opens a new, empty store rather than failing.
+
+## Sessions: one store per target
+
+Every tool above takes an optional `session` argument, and each session is a separate store
+under `<MCP_STORAGE_DIR>/spaces/<session>/`. This matters as soon as more than one agent
+talks to the same server: without it, one agent's thoughts land in another's summary,
+`revisionOf` echo and related-thought lookups, and `clear_history` / `import_session` wipe
+everybody's work at once.
+
+Which session a call uses is resolved per request, first match wins:
+
+1. the `session` argument on the call - e.g. `session="storport"`;
+2. the `X-Thinking-Session` HTTP header;
+3. `?session=<name>` on the server URL (`http://host:port/mcp?session=storport`);
+4. the `MCP_DEFAULT_SESSION` environment variable (mainly for stdio deployments);
+5. otherwise the call is refused - unless `SESSION_REQUIRED=0`, which falls back to `default`.
+
+(2) and (3) let an MCP client fix the session once in its config, so every agent deployed
+against that config shares one chain per target; the argument in (1) overrides it when a
+single run legitimately spans two targets, such as diffing two versions of one binary.
+
+A store written by a pre-0.7.0 release, which lived directly in the storage root, is migrated
+once into `spaces/default/` on first start; the original is kept as
+`current_session.jsonl.migrated-to-spaces`.
 
 ## Comparison to the official sequential-thinking server
 

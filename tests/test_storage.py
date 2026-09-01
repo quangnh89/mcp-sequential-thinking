@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 
 from mcp_sequential_thinking.models import ThoughtStage, ThoughtData
-from mcp_sequential_thinking.storage import ThoughtStorage
+from mcp_sequential_thinking.storage import StorageRegistry, ThoughtStorage
 
 
 def read_jsonl_records(session_file):
@@ -626,6 +626,94 @@ class TestThoughtStorage(unittest.TestCase):
             data = json.load(f)
         self.assertEqual(data["version"], 2)
         self.assertEqual(len(data["thoughts"]), 1)
+
+
+class TestStorageRegistry(unittest.TestCase):
+    """Test cases for the per-namespace store registry."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    @staticmethod
+    def _thought(number, text="Thought"):
+        return ThoughtData(
+            thought=f"{text} {number}",
+            thought_number=number,
+            total_thoughts=3,
+            next_thought_needed=True,
+            stage=ThoughtStage.ANALYSIS,
+        )
+
+    def test_each_namespace_gets_its_own_store(self):
+        registry = StorageRegistry(str(self.root))
+
+        registry.get("storport").add_thought(self._thought(1))
+        registry.get("bfs").add_thought(self._thought(1))
+        registry.get("bfs").add_thought(self._thought(2))
+
+        self.assertEqual(len(registry.get("storport").get_all_thoughts()), 1)
+        self.assertEqual(len(registry.get("bfs").get_all_thoughts()), 2)
+        self.assertTrue((self.root / "spaces" / "storport" / "current_session.jsonl").exists())
+        self.assertTrue((self.root / "spaces" / "bfs" / "current_session.jsonl").exists())
+
+    def test_get_is_idempotent_and_case_insensitive(self):
+        registry = StorageRegistry(str(self.root))
+
+        first = registry.get("Storport")
+        second = registry.get("storport ")
+
+        self.assertIs(first, second)
+
+    def test_invalid_namespace_is_rejected(self):
+        registry = StorageRegistry(str(self.root))
+
+        for bad in ("", "..", "../escape", "a/b", "-leading", "x" * 65):
+            with self.assertRaises(ValueError):
+                registry.get(bad)
+
+    def test_list_namespaces_reads_from_disk(self):
+        registry = StorageRegistry(str(self.root))
+        registry.get("alpha").add_thought(self._thought(1))
+        registry.get("beta").add_thought(self._thought(1))
+        registry.get("beta").add_thought(self._thought(2))
+
+        # A fresh registry has nothing loaded in memory, so this is the disk view.
+        listed = {e["session"]: e for e in StorageRegistry(str(self.root)).list_namespaces()}
+
+        self.assertEqual(listed["alpha"]["thoughts"], 1)
+        self.assertEqual(listed["beta"]["thoughts"], 2)
+        self.assertFalse(listed["beta"]["loaded"])
+        self.assertIsNotNone(listed["beta"]["updatedAt"])
+
+    def test_migrates_a_pre_namespace_store_into_default(self):
+        """A store written by the single-store release is adopted, not orphaned."""
+        flat = ThoughtStorage(str(self.root))
+        flat.add_thought(self._thought(1, "Legacy"))
+        flat.add_thought(self._thought(2, "Legacy"))
+        flat.export_session("carried.json")
+
+        registry = StorageRegistry(str(self.root))
+        default_store = registry.get("default")
+
+        self.assertEqual(len(default_store.get_all_thoughts()), 2)
+        self.assertIn("Legacy", default_store.get_all_thoughts()[0].thought)
+        self.assertTrue((self.root / "spaces" / "default" / "exports" / "carried.json").exists())
+        self.assertTrue((self.root / "current_session.jsonl.migrated-to-spaces").exists())
+        self.assertFalse((self.root / "current_session.jsonl").exists())
+
+    def test_migration_is_idempotent(self):
+        flat = ThoughtStorage(str(self.root))
+        flat.add_thought(self._thought(1, "Legacy"))
+
+        StorageRegistry(str(self.root))
+        # A second start must not re-migrate, and must not duplicate thoughts.
+        registry = StorageRegistry(str(self.root))
+
+        self.assertEqual(len(registry.get("default").get_all_thoughts()), 1)
 
 
 if __name__ == "__main__":

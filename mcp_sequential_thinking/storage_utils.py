@@ -243,6 +243,36 @@ def load_thoughts_from_jsonl(
         return []
 
 
+def count_thoughts_in_jsonl(file_path: Path, lock_file: Path) -> int:
+    """Count the thought records in a JSONL session file without parsing them.
+
+    Used by the namespace listing, which wants a size per session and must not
+    pay the cost of building ``ThoughtData`` objects for every store on disk
+    (nor of loading a namespace nobody asked for into memory).
+
+    Args:
+        file_path: Path to the JSONL session file.
+        lock_file: Path to the lock file.
+
+    Returns:
+        int: Number of thought records, or 0 if the file is missing or unreadable.
+    """
+    if not file_path.exists():
+        return 0
+
+    try:
+        with portalocker.Lock(lock_file, timeout=10) as _, open(file_path, 'r', encoding='utf-8') as f:
+            # Every record is one line and "type" is written first (see
+            # _dump_record), so the record kind is decided by the prefix - no
+            # need to parse, and a thought whose text mentions "type" cannot
+            # be miscounted (its quotes are escaped inside the string).
+            return sum(1 for line in f if line.startswith('{"type": "thought"'))
+    except (OSError, portalocker.exceptions.BaseLockException) as e:
+        # A listing must never fail because one store is locked or unreadable.
+        logger.warning(f"Could not count thoughts in {file_path}: {e}")
+        return 0
+
+
 def load_thoughts_from_file(
     file_path: Path,
     lock_file: Path,
