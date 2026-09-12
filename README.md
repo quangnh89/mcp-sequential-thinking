@@ -481,6 +481,88 @@ A store written by a pre-0.7.0 release, which lived directly in the storage root
 once into `spaces/default/` on first start; the original is kept as
 `current_session.jsonl.migrated-to-spaces`.
 
+## Skill: teaching an agent to use this server well
+
+`skills/sequential-thinking/` is an agent **skill** that ships with this repository. It is
+documentation, not code: it tells an agent when a thought chain is worth opening at all, what each
+stage is for, the cross-field rules this server enforces, and — the part agents get wrong most
+often — that one `session` is one unit of work and that several agents share the store inside it.
+It does not replace or wrap the server; the server works without it.
+
+The skill is deliberately domain-neutral: its worked examples are a web/database latency
+regression, an equity price-and-volume analysis, and a novel's continuity chain. Nothing in it
+assumes what you are using the server for.
+
+```
+skills/sequential-thinking/
+├── SKILL.md                    when to open a chain, tools, parameters, session semantics
+└── references/
+    ├── patterns.md             revision, branch-and-converge, scope, concurrency, export/import
+    └── examples.md             three complete chains, one per pattern
+```
+
+The skill is part of the repository checkout only — it is not in the PyPI wheel, so install it from
+a clone or a submodule of this repo.
+
+### Installing it
+
+```bash
+# into a project, for Claude Code               -> <project>/.claude/skills/sequential-thinking/
+python install_skill.py --target ../my-project
+
+# into your user-level Claude skills            -> ~/.claude/skills/sequential-thinking/
+python install_skill.py --runner claude-user
+
+# into a project, for OpenCode                  -> <project>/.opencode/skills/sequential-thinking/
+python install_skill.py --target ../my-project --runner opencode
+```
+
+| Option | Meaning |
+|---|---|
+| `--target DIR` | Root directory of the destination project. Required unless you pass `--dest`, and ignored for `--runner claude-user`. |
+| `--runner {claude,claude-user,opencode,raw}` | Selects **both** the destination path **and** the tool-name dialect. `claude` → `<target>/.claude/skills/sequential-thinking/`, tools prefixed `mcp__<server>__`. `claude-user` → `~/.claude/skills/sequential-thinking/`, same prefix. `opencode` → `<target>/.opencode/skills/sequential-thinking/`, prefix `<server>_`. `raw` → copied with bare tool names, for a host that exposes them unprefixed. Default: `claude`. |
+| `--server-name NAME` | The name you registered this MCP server under in your host's config; the prefix is built from it. Default: `sequential-thinking`. Change it if your config calls the server something else, or the skill will name tools your host does not have. |
+| `--dest DIR` | Write to this exact directory, ignoring the `--runner` path rule. The dialect still follows `--runner`. |
+| `--force` | Overwrite an existing destination. Without it the install refuses and prints the path in the way. |
+| `--dry-run` | Print the destination, the prefix and the files that would be written, then stop. |
+
+Re-running is safe: the installed copy is byte-identical to the previous one, and a name that
+already carries a prefix is never prefixed twice.
+
+### Installing it by hand
+
+The files in `skills/` use the **bare** tool names this server registers. Most hosts expose MCP
+tools under a prefix, so after copying the directory, rewrite the six names. This is the whole
+conversion — there is nothing else host-specific in the skill:
+
+| In `skills/` | Claude Code | OpenCode |
+|---|---|---|
+| `process_thought` | `mcp__sequential-thinking__process_thought` | `sequential-thinking_process_thought` |
+| `generate_summary` | `mcp__sequential-thinking__generate_summary` | `sequential-thinking_generate_summary` |
+| `clear_history` | `mcp__sequential-thinking__clear_history` | `sequential-thinking_clear_history` |
+| `export_session` | `mcp__sequential-thinking__export_session` | `sequential-thinking_export_session` |
+| `import_session` | `mcp__sequential-thinking__import_session` | `sequential-thinking_import_session` |
+| `list_sessions` | `mcp__sequential-thinking__list_sessions` | `sequential-thinking_list_sessions` |
+
+Replace `sequential-thinking` in the prefix with whatever name your config registers the server
+under. The same rewrite, run over the copied directory:
+
+```bash
+# bash / sed, inside the copied skill directory (Claude Code dialect)
+sed -i -E 's/(^|[^_A-Za-z-])(process_thought|generate_summary|clear_history|export_session|import_session|list_sessions)/\1mcp__sequential-thinking__\2/g' SKILL.md references/*.md
+```
+
+```powershell
+# PowerShell, inside the copied skill directory (Claude Code dialect)
+Get-ChildItem -Recurse -Filter *.md | ForEach-Object {
+  (Get-Content $_.FullName -Raw) -replace '(?<![\w-])(process_thought|generate_summary|clear_history|export_session|import_session|list_sessions)\b', 'mcp__sequential-thinking__$1' |
+    Set-Content $_.FullName -Encoding utf8
+}
+```
+
+Whichever way you install it, wiring the server itself into the host's MCP config is a separate
+step — see the integration sections above.
+
 ## Comparison to the official sequential-thinking server
 
 The [official MCP sequential-thinking server](https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking) provides the core paradigm: numbered thoughts with revisions and branching, held in memory for the duration of the process. This server implements the same paradigm and adds:

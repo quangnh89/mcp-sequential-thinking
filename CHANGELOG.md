@@ -6,6 +6,12 @@ Everything below this heading is fork-only and has no upstream counterpart. Keep
 separate so `master` can still fast-forward from arben-adm and this branch rebases on top.
 
 ### Added
+- **Bundled agent skill.** `skills/sequential-thinking/` ships a domain-neutral skill - when a
+  thought chain is worth opening, what each stage is for, the cross-field rules the server
+  enforces, and the session/concurrency semantics above - plus `install_skill.py`, which copies it
+  into a project and rewrites the six tool names into the host's dialect (`mcp__<server>__<tool>`
+  for Claude Code, `<server>_<tool>` for OpenCode) so the conversion never depends on an agent
+  getting it right. The skill is checkout-only; it is not part of the wheel.
 - **Session namespaces.** The history is no longer one store per process: each thinking
   session gets its own store under `<MCP_STORAGE_DIR>/spaces/<session>/`, and which one a
   call lands in is resolved PER REQUEST - the tool's new `session` argument first, then the
